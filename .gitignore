@@ -1,0 +1,11 @@
+*.h5
+*.pyc
+*.html
+GTAGS
+GRTAGS
+GPATH
+py3env
+*.json
+__pycache__
+.cache
+
