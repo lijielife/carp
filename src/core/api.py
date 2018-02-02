@@ -46,7 +46,11 @@ class JsonLoader(object):
             self.data = {}
 
     def put(self, **args):
-        self.data = dict(self.data, **args)
+        for key in args:
+            if isinstance(args[key], BaseDataFrame):
+                self.data = dict(self.data, **{key:args[key].to_json(orient='index')})
+            else:
+                self.data = dict(self.data, **{key:args[key]})
         self.sync()
 
     def get(self, key, load_callback=None):
@@ -93,7 +97,7 @@ class StockStore(object):
         self.__open()
         if df is None:
             return
-        self.store.put(key, df, append=_append, format='table', data_columns=True, **kwargs)
+        self.store.put(key, df.df(), append=_append, format='table', data_columns=True, **kwargs)
 
     def get(self, key):
         self.__open()
@@ -144,27 +148,21 @@ class BaseDataFrame(object):
         elif key in self.__df.keys():
             self.__df.set_index(key, inplace=inplace)
 
-    def raw(self):
-        return self.__df
+    def to_json(self, **kwargs):
+        return self.__df.to_json(**kwargs)
 
-    def query(self, key, value):
-        return self.__df[self.__df[key] == value]
+    def __getitem__(self, key):
+        return self.__df[key]
 
     def index(self, i=""):
-        if i == "":
-            return self.__df.index
-        else:
-            return self.__df.loc[i]
+        return self.__df.index if i == "" else self.__df.loc[i]
 
     @property
     def empty(self):
-        if self.__df is None:
-            return True
-        print(self.__df.empty)
-        return self.__df.empty
+        return True if self.__df is None else self.__df.empty
 
-    def __call__(self, key):
-        return self.__df[key]
+    def df(self):
+        return self.__df
 
     @staticmethod
     def format_fields(*fields):
@@ -261,6 +259,17 @@ class DailyDataFrame(BaseDataFrame):
         BaseDataFrame.__init__(self, df)
         self.set_index(DailyDataFrame.TRADE_DATE)
 
+    @classmethod
+    def fields(self):
+        return BaseDataFrame.format_fields(
+                *[DailyDataFrame.CLOSE,
+                    DailyDataFrame.TRADE_DATE,
+                    DailyDataFrame.OPEN,
+                    DailyDataFrame.HIGH,
+                    DailyDataFrame.LOW,
+                    DailyDataFrame.VOLUME,
+                    DailyDataFrame.TRADE_STATUS])
+
 
 class BarDataFrame(BaseDataFrame):
     SYMBOL = 'symbol'
@@ -337,13 +346,7 @@ class Api(object):
         return SecrestrictedDataFrame(df)
 
     # 日交易行情
-    def daily(self, _symbol, _start_date, _end_date, _freq='1d', _fields=BaseDataFrame.format_fields(DailyDataFrame.CLOSE,
-                                                                                                     DailyDataFrame.TRADE_DATE,
-                                                                                                     DailyDataFrame.OPEN,
-                                                                                                     DailyDataFrame.HIGH,
-                                                                                                     DailyDataFrame.LOW,
-                                                                                                     DailyDataFrame.VOLUME,
-                                                                                                     DailyDataFrame.TRADE_STATUS), _adjust_mode='post'):
+    def daily(self, _symbol, _start_date, _end_date, _freq='1d', _fields=DailyDataFrame.fields(), _adjust_mode='post'):
         self.__lazy_login()
         df, msg = self.__api.daily(
             symbol=_symbol,
@@ -431,7 +434,7 @@ class TradeCalendar(object):
             def load_func(key, data):
                 if data is None:
                     trade = cls.__api.tradecal()
-                    loader.put(infos=trade.raw().to_json(orient='index'))
+                    loader.put(infos=trade)
                     return trade
                 else:
                     return TradecalDataFrame(pd.read_json(data, orient='index'))
@@ -459,12 +462,12 @@ class TradeCalendar(object):
             now = now if _date == "" else cls.string2date(_date)
 
         if _trade:
-            df = cls.__calendar.raw()
+            df = cls.__calendar
             now2int = cls.date2int(now)
             if _days <= 0:
-                now2int = df[df.index.astype('int64') <= now2int].iloc[-1 + _days].name
+                now2int = df[df.index().astype('int64') <= now2int].iloc[-1 + _days].name
             else:
-                now2int = df[df.index.astype('int64') >= now2int].iloc[_days].name
+                now2int = df[df.index().astype('int64') >= now2int].iloc[_days].name
             return cls.int2date(int(now2int))
         else:
             return now + datetime.timedelta(days=_days)
@@ -498,10 +501,8 @@ class TradeCalendar(object):
 
 if __name__ == "__main__":
     #api = Api()
-    #print(api.daily('000006.SZ', TradeCalendar.day(_days=-1440), TradeCalendar.day(), _freq='1d').raw())
 
     filters = urlencode({'start_date': '3',
                          'end_date': '4'})
     # print(api.secsusp(_filter="end_date=20180125"))
-    #print(api.bar('000001.SZ', '2018-01-17', _freq = '5M').raw())
     # print(TradeCalendar.day(_days=-3))

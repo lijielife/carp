@@ -138,7 +138,7 @@ class StockBarLoader(object):
         if daily.empty:
             raise Exception("get empty")
         else:
-            self.save(self.symbol, daily.raw(), _append=append)
+            self.save(self.symbol, daily, _append=append)
 
     def __refresh_week(self, start, end):
         last = self.get_store_last_date()
@@ -157,7 +157,7 @@ class StockBarLoader(object):
         if daily.empty:
             raise Exception("get empty")
         else:
-            self.save(self.symbol, daily.raw(), _append=append)
+            self.save(self.symbol, daily, _append=append)
 
     def refresh(self, start=cal.now(),  duration=1440, freq=FREQ_DAY):
         self.freq = freq

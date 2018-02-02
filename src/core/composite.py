@@ -23,7 +23,7 @@ class Composite(object):
         def load_func(key, data):
             if data is None:
                 symbols_info = self.__api.instrumentinfo()
-                loader.put(infos=symbols_info.raw().to_json(orient='index'))
+                loader.put(infos=symbols_info.to_json(orient='index'))
                 return symbols_info
             else:
                 return InstrumentinfoDataFrame(pd.read_json(data, orient='index'))
