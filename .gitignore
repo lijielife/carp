@@ -8,4 +8,7 @@ py3env
 *.json
 __pycache__
 .cache
+*.log
+*.rdb
+
 
