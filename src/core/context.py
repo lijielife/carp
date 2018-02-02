@@ -4,7 +4,6 @@ import numpy as np
 from core.api import singleton, Api, TradeCalendar
 from core.composite import Composite
 from core.stock import StockBarLoader, StockFactory
-import core.util
 
 
 _API = Api()

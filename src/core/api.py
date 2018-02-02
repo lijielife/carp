@@ -3,10 +3,117 @@ import os
 import datetime
 import functools
 import pandas as pd
+import logging
 from jaqs.data import DataApi
 from urllib.parse import urlencode
-from core.util import logger, JsonLoader, LOCAL_CACHE_PATH
 
+try:
+    import simplejson as json
+except ImportError:
+    import json
+
+__CARP_ROOT_PATH = '/tmp'
+
+def LOCAL_CACHE_PATH():
+    return os.path.join(__CARP_ROOT_PATH, 'carp')
+
+def LOCAL_STORE_PATH():
+    return os.path.join(LOCAL_CACHE_PATH(), 'k')
+
+if not os.path.exists(LOCAL_STORE_PATH()):
+    os.makedirs(LOCAL_STORE_PATH())
+
+
+logging.basicConfig(
+    format="%(levelname)s/%(filename)s:[%(module)s.%(funcName)s]>%(lineno)d:  %(message)s")
+logger = logging.getLogger('carp')
+logger.setLevel(logging.DEBUG)
+
+
+class JsonLoader(object):
+    @staticmethod
+    def create(filename=""):
+        with open(filename, 'a+') as f:
+            pass
+        return JsonLoader(filename)
+
+    def __init__(self, filename):
+        self.filename = filename
+        try:
+            with open(self.filename) as f:
+                self.data = json.load(f)
+        except ValueError:
+            self.data = {}
+
+    def put(self, **args):
+        self.data = dict(self.data, **args)
+        self.sync()
+
+    def get(self, key, load_callback=None):
+        data = self.data.get(key)
+        if load_callback is not None:
+            data = load_callback(key, data)
+        else:
+            logger.info('load %s from %s success' % (key, self.filename))
+        return data
+
+    def sync(self):
+        with open(self.filename, 'w+') as f:
+            json.dump(self.data, f)
+
+
+class StockStore(object):
+
+    @classmethod
+    def get_stock_path(cls):
+        return LOCAL_STORE_PATH()
+
+    def __init__(self, symbol):
+        self.symbol = symbol
+        self.filename = os.path.join(LOCAL_STORE_PATH(), symbol + '.h5')
+        self.store = None
+
+    def is_open(self):
+        return self.store is not None and self.store.is_open
+
+    def close(self):
+        if self.store is not None:
+            self.store.close()
+
+    def __open(self):
+        if self.store is None:
+            self.store = pd.HDFStore(self.filename, format='table')
+        return self.store
+
+    def keys(self):
+        self.__open()
+        return self.store.keys()
+
+    def save(self, key, df, _append=True, **kwargs):
+        self.__open()
+        if df is None:
+            return
+        self.store.put(key, df, append=_append, format='table', data_columns=True, **kwargs)
+
+    def get(self, key):
+        self.__open()
+        return self.store.get(key)
+
+    def select(self, key, **args):
+        self.__open()
+        return self.store.select(key, **args)
+
+    def attribute(self, key, **kwargs):
+        self.__open()
+        meta_info = "meta_info"
+        if key in self.keys():
+            if kwargs:
+                self.store.get_storer(key).attrs[meta_info] = kwargs
+            else:
+                dic = self.store.get_storer(key).attrs[meta_info]
+                return {} if dic is None else dic
+        else:
+            return {}
 
 def singleton(cls):
     instance = {}
@@ -32,7 +139,7 @@ class BaseDataFrame(object):
             elif isinstance(self.__df, str):
                 logger.error('df is string %s' % self.__df)
             raise Exception('df is not DataFrame ' + type(self.__df))
-        elif self.__df.empty is True:
+        elif self.__df.empty:
             logger.warning('df is empty')
         elif key in self.__df.keys():
             self.__df.set_index(key, inplace=inplace)
@@ -49,9 +156,11 @@ class BaseDataFrame(object):
         else:
             return self.__df.loc[i]
 
+    @property
     def empty(self):
         if self.__df is None:
             return True
+        print(self.__df.empty)
         return self.__df.empty
 
     def __call__(self, key):
@@ -316,14 +425,13 @@ class TradeCalendar(object):
     @classmethod
     def __lazy_load(cls):
         if TradeCalendar.__calendar is None:
-            filename = os.path.join(LOCAL_CACHE_PATH, cls.__filename)
+            filename = os.path.join(LOCAL_CACHE_PATH(), cls.__filename)
             loader = JsonLoader.create(filename)
 
             def load_func(key, data):
                 if data is None:
                     trade = cls.__api.tradecal()
                     loader.put(infos=trade.raw().to_json(orient='index'))
-                    loader.sync()
                     return trade
                 else:
                     return TradecalDataFrame(pd.read_json(data, orient='index'))

@@ -4,8 +4,8 @@ import datetime
 import talib
 import numpy as np
 import pandas as pd
-from core.api import TradeCalendar as cal, singleton, Api, DailyDataFrame
-from core.util import logger, LOCAL_CACHE_PATH, JsonLoader, StockStore
+import core.api
+from core.api import TradeCalendar as cal, singleton, Api, DailyDataFrame, logger, JsonLoader, StockStore
 from core.composite import Composite
 
 FREQ_1M = '1M'
@@ -19,7 +19,7 @@ FREQ_MONTH = '1m'
 class StockBarLoader(object):
     __api = Api()
 
-    __CACHE_CONFIG = os.path.join(LOCAL_CACHE_PATH, 'k', 'cache.json')
+    __CACHE_CONFIG = os.path.join(core.api.LOCAL_STORE_PATH(), 'cache.json')
     if not os.path.exists(__CACHE_CONFIG):
         JsonLoader.create(__CACHE_CONFIG)
 
@@ -37,7 +37,6 @@ class StockBarLoader(object):
         config = cls.__CACHE_CONFIG
         l = JsonLoader.create(config)
         l.put(**{'date': cal.now().strftime('%Y-%m-%d')})
-        l.sync()
 
     @staticmethod
     def sync_stock_bar(**args):
@@ -136,7 +135,7 @@ class StockBarLoader(object):
                     (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
         daily = StockBarLoader.__api.daily(self.symbol, _start_date=start,
                                            _end_date=end, _freq=FREQ_DAY)
-        if daily.empty is True:
+        if daily.empty:
             raise Exception("get empty")
         else:
             self.save(self.symbol, daily.raw(), _append=append)
@@ -155,7 +154,7 @@ class StockBarLoader(object):
                     (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
         daily = StockBarLoader.__api.daily(self.symbol, _start_date=start,
                                            _end_date=end, _freq=FREQ_WEEK)
-        if daily.empty is True:
+        if daily.empty:
             raise Exception("get empty")
         else:
             self.save(self.symbol, daily.raw(), _append=append)
@@ -237,7 +236,7 @@ class StockBar(object):
     def duration(self):
         if self.df is None:
             return None, None
-        if self.df.empty is True:
+        if self.df.empty:
             return None, None
         return (cal.int2date(self.df.iloc[0].name.astype('int64')),
                 cal.int2date(self.df.iloc[-1].name.astype('int64')))

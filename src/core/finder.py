@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 import time
-from core.api import singleton, logger, TradeCalendar
+from core.api import singleton, logger, TradeCalendar, JsonLoader
 import core.stock
 import core.context as context
-import core.util
 
 
 class Finder(object):
@@ -48,7 +47,6 @@ class FinderEngine(object):
         logger.info(result)
         l = util.JsonLoader.create('result.json')
         l.put(**{'result': result})
-        l.sync()
 
     def __finder_run(self, finder):
         ret = []

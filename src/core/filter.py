@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import core.context
 import numpy as np
-from core.util import logger
 
 
 class Filter:
