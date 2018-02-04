@@ -1,27 +1,25 @@
 # -*- coding: utf-8 -*-
 import os
 import datetime
+import arrow
 import functools
 import pandas as pd
+import numpy as np
 import logging
 from jaqs.data import DataApi
 from urllib.parse import urlencode
+from pathlib import Path
 
 try:
     import simplejson as json
 except ImportError:
     import json
 
-__CARP_ROOT_PATH = '/tmp'
+LOCAL_CACHE_PATH = os.path.join(str(Path.home()), '.carp')
+LOCAL_STORE_PATH = os.path.join(LOCAL_CACHE_PATH, 'k')
 
-def LOCAL_CACHE_PATH():
-    return os.path.join(__CARP_ROOT_PATH, 'carp')
-
-def LOCAL_STORE_PATH():
-    return os.path.join(LOCAL_CACHE_PATH(), 'k')
-
-if not os.path.exists(LOCAL_STORE_PATH()):
-    os.makedirs(LOCAL_STORE_PATH())
+if not os.path.exists(LOCAL_STORE_PATH):
+    os.makedirs(LOCAL_STORE_PATH)
 
 
 logging.basicConfig(
@@ -68,13 +66,9 @@ class JsonLoader(object):
 
 class StockStore(object):
 
-    @classmethod
-    def get_stock_path(cls):
-        return LOCAL_STORE_PATH()
-
     def __init__(self, symbol):
         self.symbol = symbol
-        self.filename = os.path.join(LOCAL_STORE_PATH(), symbol + '.h5')
+        self.filename = os.path.join(LOCAL_STORE_PATH, symbol + '.h5')
         self.store = None
 
     def is_open(self):
@@ -114,8 +108,11 @@ class StockStore(object):
             if kwargs:
                 self.store.get_storer(key).attrs[meta_info] = kwargs
             else:
-                dic = self.store.get_storer(key).attrs[meta_info]
-                return {} if dic is None else dic
+                try:
+                    dic = self.store.get_storer(key).attrs[meta_info]
+                    return {} if dic is None else dic
+                except KeyError:
+                    return {}
         else:
             return {}
 
@@ -135,14 +132,14 @@ class BaseDataFrame(object):
 
     def set_index(self, key, inplace=True):
         if self.__df is None:
-            raise Exception('df is None')
+            logger.error('df is none')
         elif isinstance(self.__df, pd.DataFrame) == False:
             # for debug
             if isinstance(self.__df, int):
                 logger.error('df is int %d' % self.__df)
             elif isinstance(self.__df, str):
                 logger.error('df is string %s' % self.__df)
-            raise Exception('df is not DataFrame ' + type(self.__df))
+            #raise Exception('df is not DataFrame ' + type(self.__df))
         elif self.__df.empty:
             logger.warning('df is empty')
         elif key in self.__df.keys():
@@ -159,7 +156,12 @@ class BaseDataFrame(object):
 
     @property
     def empty(self):
-        return True if self.__df is None else self.__df.empty
+        if self.__df is None:
+            return True
+        elif isinstance(self.__df, pd.DataFrame) == False:
+            return True
+        else:
+            return self.__df.empty
 
     def df(self):
         return self.__df
@@ -351,8 +353,8 @@ class Api(object):
         df, msg = self.__api.daily(
             symbol=_symbol,
             freq=_freq,
-            start_date=TradeCalendar.date2string(_start_date),
-            end_date=TradeCalendar.date2string(_end_date),
+            start_date=_start_date.to_str(),
+            end_date=_end_date.to_str(),
             fields=_fields,
             adjust_mode=_adjust_mode)
         logger.debug('request daily')
@@ -426,11 +428,59 @@ class TradeCalendar(object):
     __calendar = None
 
     @classmethod
-    def __lazy_load(cls):
-        if TradeCalendar.__calendar is None:
-            filename = os.path.join(LOCAL_CACHE_PATH(), cls.__filename)
-            loader = JsonLoader.create(filename)
+    def duration(cls, _date = None, _days = 0, _trade = True):
+        start = cls.create(_date, trade=_trade)
+        end = cls.__trade_day(start.__arrow, _days = _days)
+        return (start, end) if start < end else (end, start)
 
+
+    @classmethod
+    def create(cls, v = None, trade = True):
+        if v is None:
+            return TradeCalendar(arrow.now(), _trade = trade)
+        ret = None
+        if isinstance(v, int) or isinstance(v, np.int64):
+            _datetime = pd.to_datetime(str(v), format='%Y%m%d', errors='ignore')
+            ret = arrow.get(_datetime)
+        elif isinstance(v, str):
+            ret = arrow.get(v, 'YYYY-MM-DD')
+        elif isinstance(v, datetime.datetime):
+            ret = arrow.get(v)
+        elif isinstance(v, arrow.Arrow):
+            ret = v
+        elif isinstance(v, TradeCalendar):
+            ret = v.__arrow
+        else:
+            raise Exception('known type %s' % type(v))
+        return TradeCalendar(ret)
+
+    @classmethod
+    def now(cls, trade = True):
+        n = arrow.now()
+        return cls.create(n, trade = trade)
+
+
+    # only day hour, and min
+    @classmethod
+    def __trade_day(cls, __arrow, _days = 0):
+        cls.__load_trade_cal()
+        df = cls.__calendar
+        _now = __arrow.year * 10000 + __arrow.month * 100 + __arrow.day
+        _item = None
+        if _days <= 0:
+            _item = df[df.index().astype('int64') <= _now].iloc[-1 + int(_days)].name
+        else:
+            _item = df[df.index().astype('int64') >= _now].iloc[int(_days)].name
+
+        _tmp = pd.to_datetime(str(_item), format='%Y%m%d', errors='ignore')
+        return TradeCalendar(__arrow.replace(year = _tmp.year, month = _tmp.month, day = _tmp.day))
+
+
+    @classmethod
+    def __load_trade_cal(cls):
+        if TradeCalendar.__calendar is None:
+            filename = os.path.join(LOCAL_CACHE_PATH, cls.__filename)
+            loader = JsonLoader.create(filename)
             def load_func(key, data):
                 if data is None:
                     trade = cls.__api.tradecal()
@@ -441,68 +491,66 @@ class TradeCalendar(object):
 
             TradeCalendar.__calendar = loader.get('infos', load_callback=load_func)
 
-    @classmethod
-    def duration(cls, _date="", _days=0, _trade=True):
-        now = datetime.datetime.now()
-        start = cls.day(_date=_date, _trade=_trade)
-        end = cls.day(_date=_date, _days=_days, _trade=_trade)
-        return (start, end) if start < end else (end, start)
 
-    @classmethod
-    def now(cls, _trade=True):
-        return cls.day(_trade=_trade)
 
-    @classmethod
-    def day(cls, _date="",  _days=0, _trade=True):
-        cls.__lazy_load()
-        now = datetime.datetime.now()
-        if isinstance(_date, int):
-            now = now if _date == 0 else cls.int2date(_date)
-        elif isinstance(_date, str):
-            now = now if _date == "" else cls.string2date(_date)
+    def __init__(self, _arrow, _trade = True):
+        self.__arrow = _arrow
+        self.__trade = _trade
 
-        if _trade:
-            df = cls.__calendar
-            now2int = cls.date2int(now)
-            if _days <= 0:
-                now2int = df[df.index().astype('int64') <= now2int].iloc[-1 + _days].name
-            else:
-                now2int = df[df.index().astype('int64') >= now2int].iloc[_days].name
-            return cls.int2date(int(now2int))
+    def __add__(self, other):
+        return self.__arrow.__add__(other.__arrow)
+
+    def __sub__(self, other):
+        return self.__arrow.__sub__(other.__arrow)
+
+    def __eq__(self, other):
+        return self.__arrow.__eq__(other.__arrow)
+
+    def __ne__(self, other):
+        return self.__arrow.__ne__(other.__arrow)
+
+    def __gt__(self, other):
+        return self.__arrow.__gt__(other.__arrow)
+
+    def __ge__(self, other):
+        return self.__arrow.__ge__(other.__arrow)
+
+    def __lt__(self, other):
+        return self.__arrow.__lt__(other.__arrow)
+
+    def __le__(self, other):
+        return self.__arrow.__le__(other.__arrow)
+
+    def __str__(self):
+        return self.__arrow.__str__()
+
+    def __repr__(self):
+        return self.__arrow.__repr__()
+
+    #day
+    def shift(self, days):
+        if self.__trade:
+            return self.__trade_day(self.__arrow, _days = days)
         else:
-            return now + datetime.timedelta(days=_days)
+            return TradeCalendar(self.__arrow.shift(days = days))
 
-    @staticmethod
-    def date2int(date):
-        return date.year * 10000 + date.month * 100 + date.day
+    def to_int(self):
+        year = self.__arrow.year
+        month = self.__arrow.month
+        day = self.__arrow.day
+        return year * 10000 + month * 100 + day
 
-    @staticmethod
-    def int2date(num):
-        year = num // 10000
-        month = (num - (num - num % 10000)) // 100
-        day = num % 100
-        return datetime.datetime(year, month, day)
-
-    @staticmethod
-    def date2string(date):
-        FORMAT = '%Y-%m-%d'
-        return date.strftime(FORMAT)
-
-    @staticmethod
-    def datestr2int(s):
-        date = TradeCalendar.string2date(s)
-        return TradeCalendar.date2int(date)
-
-    @staticmethod
-    def string2date(s):
-        FORMAT = '%Y-%m-%d'
-        return datetime.datetime.strptime(s, FORMAT)
+    def to_str(self):
+        return self.__arrow.format('YYYY-MM-DD')
 
 
 if __name__ == "__main__":
+    pass
+    #print(TradeCalendar.now() > TradeCalendar.now())
+    #t = TradeCalendar.now()
+    #v = t.shift(-3)
     #api = Api()
-
-    filters = urlencode({'start_date': '3',
-                         'end_date': '4'})
+    #filters = urlencode({'start_date': '3',
+    #                     'end_date': '4'})
     # print(api.secsusp(_filter="end_date=20180125"))
     # print(TradeCalendar.day(_days=-3))

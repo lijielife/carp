@@ -5,9 +5,9 @@ import pathlib
 import numpy as np
 import pandas as pd
 from pyecharts import Kline, Overlap, Line, Grid, Bar, Page
-import core.stock
-import core.context
-from core.api import TradeCalendar as cal
+from .stock import FREQ_WEEK
+from .api import TradeCalendar as cal
+from .context import create_stock
 
 
 class StockBarRender(object):
@@ -70,7 +70,7 @@ class StockBarRender(object):
     def __render_impl(self):
         if self.success == False:
             self.__setXaxis(3)
-            self.grid.add(self.__kline(ma=[5, 10, 20]), grid_bottom='40%')
+            self.grid.add(self.__kline(MA=[5, 10, 20]), grid_bottom='40%')
             self.grid.add(self.__volume(), grid_top='60%', grid_bottom='30%')
             self.grid.add(self.__macd(), grid_top='70%')
             self.success = True
@@ -104,13 +104,13 @@ if __name__ == "__main__":
 
     page = WebPage('test')
 
-    stock = context.stock('300348.SZ')
-    b1 = stock.bar(start=cal.day(_days=-300), end=cal.day())
-    r1 = StockBarRender(b1)
+    #stock = context.stock('300348.SZ')
+    #b1 = stock.bar(start=cal.day(_days=-300), end=cal.day())
+    #r1 = StockBarRender(b1)
 
-    stock = context.stock('000001.SZ')
-    b2 = stock.bar(start=cal.day(_days=-300), end=cal.day())
+    s = create_stock('600029.SH')
+    b2 = s.bar(start=cal.now().shift(days=-600), end=cal.now(), freq=FREQ_WEEK)
     r2 = StockBarRender(b2)
-    page.add(r1, r2)
+    page.add(r2)
     page.show()
     # webbrowser.open_new_tab(pathlib.Path(os.path.abspath(r.render())).as_uri())

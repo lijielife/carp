@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import pandas as pd
-import core.api
-from core.api import TradeCalendar, singleton, Api, InstrumentinfoDataFrame, JsonLoader
+from .api import TradeCalendar, singleton, Api, InstrumentinfoDataFrame, JsonLoader,LOCAL_CACHE_PATH
 
 
 @singleton
@@ -17,7 +16,7 @@ class Composite(object):
         return self.symbols_info.index(symbol)
 
     def __get_infos(self):
-        filename = os.path.join(core.api.LOCAL_CACHE_PATH(), self.__filename)
+        filename = os.path.join(LOCAL_CACHE_PATH, self.__filename)
         loader = JsonLoader.create(filename)
 
         def load_func(key, data):

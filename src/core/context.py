@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import os
 import numpy as np
-from core.api import singleton, Api, TradeCalendar
-from core.composite import Composite
-from core.stock import StockBarLoader, StockFactory
+from .api import singleton, Api, TradeCalendar
+from .composite import Composite
+from .stock import StockBarLoader, StockFactory
 
 
 _API = Api()
@@ -15,7 +15,7 @@ def sync(**kwargs):
     StockBarLoader.sync_stock_bar(**kwargs)
 
 
-def stock(symbol):
+def create_stock(symbol):
     if symbol in _COMPOSITE.get_all_symbols():
         return _STOCK_FACTORY.stock(symbol)
     else:
@@ -25,11 +25,13 @@ def stock(symbol):
 def lefted_symbols(day=-3):
     start, end = TradeCalendar.duration(_days=day)
     df = _API.secrestricted(_start_date=start, _end_date=end)
-    return [] if df.empty() else np.unique(df.index().values)
+    return [] if df.empty else np.unique(df.index().values)
 
 
 def get_all_symbols():
     return _COMPOSITE.get_all_symbols()
+
+
 
 
 if __name__ == "__main__":

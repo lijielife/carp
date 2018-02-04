@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 import time
-from core.api import singleton, logger, TradeCalendar, JsonLoader
-import core.stock
-import core.context as context
+from .api import singleton, logger, TradeCalendar, JsonLoader
+from .context import get_all_symbols, create_stock
+from .render import WebPage, StockBarRender
+from .stock import FREQ_WEEK
 
 
 class Finder(object):
     def __init__(self, name, symbols=[]):
         self.name = name
         self.symbols = symbols
-        self.start = TradeCalendar.day(_days=-365)
-        self.end = TradeCalendar.day()
+        self.start, self.end = TradeCalendar.duration(_days = -365)
 
     def set_finder(self, func):
         self.func = func
@@ -25,45 +25,47 @@ class FinderEngine(object):
 
     def __init__(self):
         self.finders = {}
-        self.symbol = []
 
     def create_finder(self, name, symbols=None):
         if symbols is None:
-            symbols = self.symbol.copy() if len(self.symbol) > 0 else context.get_all_symbols().copy()
+            symbols = get_all_symbols().copy()
         finder = Finder(name, symbols)
         self.finders[name] = finder
         return finder
 
-    def init_symbols(self, symbols):
-        self.symbol = symbols
 
     def run(self, f):
         logger.info('begin to run %s' % (f.name))
         result = self.__finder_run(f)
-        self.__report_result(result)
+        self.__report_result(f, result)
         logger.info('run %s end' % (f.name))
 
-    def __report_result(self, result):
-        logger.info(result)
-        l = util.JsonLoader.create('result.json')
-        l.put(**{'result': result})
+    def __report_result(self, f_obj, result):
+        page = WebPage(f_obj.name)
+        for stock in result:
+            b = stock.bar(start = f_obj.start, end= f_obj.end, freq=FREQ_WEEK)
+            if b is not None:
+                page.add(StockBarRender(b))
+        page.show()
+        #l = JsonLoader.create('result.json')
+        #l.put(**{'result': result})
 
     def __finder_run(self, finder):
         ret = []
         for symbol in finder.symbols:
-            _stock = context.stock(symbol)
+            _stock = create_stock(symbol)
             logger.info('Finder in %s[%s]' % (_stock.name, _stock.symbol))
             if finder.func(_stock, start=finder.start, end=finder.end):
                 logger.info("=============!!!!!!!!!!!!!!!!!!!!!!=============")
                 logger.info('%s[%s] is great' % (_stock.name, _stock.symbol))
                 logger.info("=============!!!!!!!!!!!!!!!!!!!!!!=============")
-                ret.append(symbol)
-            _stock.release()
+                ret.append(_stock)
+            else:
+                _stock.release()
         return ret
 
-    def reset():
+    def reset(self):
         self.finder = {}
-        self.symbol = []
 
 
 if __name__ == '__main__':

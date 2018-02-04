@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
-import datetime
 import talib
 import numpy as np
 import pandas as pd
-import core.api
-from core.api import TradeCalendar as cal, singleton, Api, DailyDataFrame, logger, JsonLoader, StockStore
-from core.composite import Composite
+from .api import TradeCalendar as cal, singleton, Api, DailyDataFrame, logger, JsonLoader, StockStore, LOCAL_CACHE_PATH, LOCAL_STORE_PATH, logger
+from .composite import Composite
 
 FREQ_1M = '1M'
 FREQ_5M = '5M'
@@ -16,34 +14,31 @@ FREQ_WEEK = '1w'
 FREQ_MONTH = '1m'
 
 
+
 class StockBarLoader(object):
     __api = Api()
 
-    __CACHE_CONFIG = os.path.join(core.api.LOCAL_STORE_PATH(), 'cache.json')
+    __CACHE_CONFIG = os.path.join(LOCAL_STORE_PATH, 'cache.json')
     if not os.path.exists(__CACHE_CONFIG):
         JsonLoader.create(__CACHE_CONFIG)
 
     @classmethod
     def get_sync_date(cls):
-        data = {}
-        config = cls.__CACHE_CONFIG
-        l = JsonLoader.create(config)
+        l = JsonLoader.create(cls.__CACHE_CONFIG)
         date = l.get('date')
-        return None if date is None else cal.string2date(date)
+        return None if date is None else cal.create(date)
 
     @classmethod
     def update_sync_date(cls):
-        data = {}
-        config = cls.__CACHE_CONFIG
-        l = JsonLoader.create(config)
-        l.put(**{'date': cal.now().strftime('%Y-%m-%d')})
+        l = JsonLoader.create(cls.__CACHE_CONFIG)
+        l.put(**{'date': cal.now().to_str()})
 
     @staticmethod
     def sync_stock_bar(**args):
         now = cal.now()
         symbols = Composite().get_all_symbols()
         last = StockBarLoader.get_sync_date()
-        if last is None or last < now:
+        if last is None or (now - last).days > 0:
             c = StockBarLoader()
             for symbol in symbols:
                 for k in args:
@@ -54,11 +49,27 @@ class StockBarLoader(object):
                             c.refresh(duration=args[k][freq], freq=freq)
                     else:
                         pass
-                StockBarLoader.update_sync_date()
+            StockBarLoader.update_sync_date()
         else:
             logger.info("stock has update last date")
 
-        pass
+
+    @staticmethod
+    def sync_checker():
+        ## read cache date
+        date = StockBarLoader.get_sync_date()
+        symbols = Composite().get_all_symbols()
+        c = StockBarLoader()
+        for symbol in symbols:
+            c.set(symbol)
+            start, end = c.get_store_date_duraion(FREQ_DAY)
+            if end is None:
+                logger.error("checker %s end date is None" % symbol)
+            elif (end - date).days != 0:
+                logger.error("checker %s end date is %s" % (symbol, end.to_str()))
+
+
+
 
     @classmethod
     def get_store(cls, symbol):
@@ -70,7 +81,6 @@ class StockBarLoader(object):
 
     def __init__(self):
         self.symbol = ""
-        self.freq = "1d"
         self.store = None
 
     def __del__(self):
@@ -91,29 +101,31 @@ class StockBarLoader(object):
                 self.store.close()
             self.store = StockBarLoader.get_store(symbol)
 
-    def get_store_last_date(self):
-        key = StockBarLoader.get_freq_key(self.freq)
-        if key in self.store.keys():
+    def get_store_date_duraion(self, freq):
+        key = StockBarLoader.get_freq_key(freq)
+        if key in self.store.keys() and self.store.get(key) is not None:
             row = len(self.store.get(key).index)
-            df = self.store.select(key, start=row - 1, end=row)
-            if df.empty:
+            row_b = self.store.select(key, start=0, end=1)
+            row_l = self.store.select(key, start=row - 1, end=row)
+            if row_b.empty or row_l.empty:
                 logger.debug('store is empty, request all')
-                return None
+                return None, None
             else:
-                if df.iloc[0][DailyDataFrame.TRADE_STATUS] == DailyDataFrame.TRADE_SUSPENSION:
+                if row_l.iloc[0][DailyDataFrame.TRADE_STATUS] == DailyDataFrame.TRADE_SUSPENSION:
                     logger.debug('%s [%s]' % (self.symbol, DailyDataFrame.TRADE_SUSPENSION))
-                return cal.int2date(df.iloc[0].name.astype('int64'))
+                return cal.create(row_b.iloc[0].name.astype('int64')), cal.create(row_l.iloc[0].name.astype('int64'))
         else:
-            return None
+            return None, None
 
-    def get_attribute(self):
-        return self.store.attribute(StockBarLoader.get_freq_key(self.freq))
+    def get_attribute(self, freq):
+        return self.store.attribute(StockBarLoader.get_freq_key(freq))
 
-    def save(self, symbol, df, _append=True):
+
+    def save(self, symbol, freq, df, _append=True):
         if df is not None:
-            key = StockBarLoader.get_freq_key(self.freq)
+            key = StockBarLoader.get_freq_key(freq)
             self.store.save(key, df, _append=_append, min_itemsize={'trade_status': 16})
-            self.store.attribute(key, **{'update': cal.date2int(cal.now())})
+            self.store.attribute(key, **{'update': cal.now().to_int()})
 
     def __refresh_min(self, duration):
         # TODO
@@ -121,66 +133,75 @@ class StockBarLoader(object):
 
     def __refresh_day(self, start, end):
         append = True
-        last = self.get_store_last_date()
-        attr_update = self.get_attribute().get('update')
-        if attr_update is not None and attr_update >= cal.date2int(cal.now()):
+        freq = FREQ_DAY
+        begin, last = self.get_store_date_duraion(freq)
+        attr_update = self.get_attribute(freq).get('update')
+        if attr_update is not None and attr_update >= cal.now().to_int():
             return
-        if last is None or last < start:
+        if begin is None or (begin - start).days > 0:
             append = False
-        elif end > last:
-            start = last + datetime.timedelta(days=1)
+        elif (end - last).days > 0:
+            start = last.shift(1)
         else:
             return
         logger.info("request daily from %s to %s" %
-                    (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
+                    (start.to_str(), end.to_str()))
         daily = StockBarLoader.__api.daily(self.symbol, _start_date=start,
-                                           _end_date=end, _freq=FREQ_DAY)
-        if daily.empty:
-            raise Exception("get empty")
+                                           _end_date=end, _freq=freq)
+        if daily.empty is False:
+            self.save(self.symbol, freq, daily, _append=append)
         else:
-            self.save(self.symbol, daily, _append=append)
+            logger.warn("df is empty")
 
     def __refresh_week(self, start, end):
-        last = self.get_store_last_date()
+        freq = FREQ_WEEK
         append = True
+        begin, last = self.get_store_date_duraion(freq)
         if last is None or last < start:
             append = False
         elif end > last:
-            start = last + datetime.timedelta(days=7)
+            next_week = last.shift(7)
+            if next_week <= end:
+                start = next_week
+            else:
+                ## isn't generate this week
+                return
         else:
             # newest
             return
         logger.info("request weekly from %s to %s" %
-                    (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
-        daily = StockBarLoader.__api.daily(self.symbol, _start_date=start,
-                                           _end_date=end, _freq=FREQ_WEEK)
-        if daily.empty:
-            raise Exception("get empty")
+                    (start.to_str(), end.to_str()))
+        weekly = StockBarLoader.__api.daily(self.symbol, _start_date=start,
+                                           _end_date=end, _freq=freq)
+        if weekly.empty is False:
+            self.save(self.symbol, freq, weekly, _append=append)
         else:
-            self.save(self.symbol, daily, _append=append)
+            logger.warn("df is empty")
 
     def refresh(self, start=cal.now(),  duration=1440, freq=FREQ_DAY):
-        self.freq = freq
-        now = cal.date2string(start)
         if freq == FREQ_1M or freq == FREQ_5M or freq == FREQ_15M:
             self.__refresh_min(duration)
         elif freq == FREQ_DAY:
-            start, end = cal.duration(_date=now, _days=-duration)
+            start, end = cal.duration(_date=start, _days=-duration)
             self.__refresh_day(start, end)
         elif freq == FREQ_WEEK:
-            start, end = cal.duration(_date=now, _days=-duration * 7)
+            start, end = cal.duration(_date=start, _days=-duration * 7)
             self.__refresh_week(start, end)
 
     def __load(self, where, freq):
+        key = self.get_freq_key(freq)
         self.set(self.symbol)
         self.refresh()
-        key = self.get_freq_key(freq)
-        return self.store.select(key, where=where)
+        if key in self.store.keys():
+            return self.store.select(key, where=where)
+        else:
+            logger.error("[%s] have no %s bar in store" % (self.symbol, freq))
+            return None
 
     def load(self, _start, _end, _freq):
         if _freq == FREQ_DAY or _freq == FREQ_WEEK or _freq == FREQ_MONTH:
-            start = cal.date2int(_start)
-            end = cal.date2int(_end)
+            start = _start.to_int()
+            end = _end.to_int()
             where = 'index >= %d & index <= %d' % (start, end)
             return self.__load(where=where, freq=_freq)
         else:
@@ -238,8 +259,8 @@ class StockBar(object):
             return None, None
         if self.df.empty:
             return None, None
-        return (cal.int2date(self.df.iloc[0].name.astype('int64')),
-                cal.int2date(self.df.iloc[-1].name.astype('int64')))
+        return (cal.create(self.df.iloc[0].name.astype('int64')),
+                cal.create(self.df.iloc[-1].name.astype('int64')))
 
     def oclh(self):
         return self.df[['open', 'close', 'low', 'high']]
@@ -266,9 +287,6 @@ class StockCore(object):
         self.bar = StockBarLoader()
         self.bar.set(symbol)
 
-    def __del__(self):
-        del self.bar
-
     def release(self):
         self.bar.release()
 
@@ -287,7 +305,7 @@ class StockCore(object):
             return False
 
     def loadbar(self, _start, _end, _freq=FREQ_DAY):
-        start = end = cal.day()
+        start = end = cal.now()
         if isinstance(_start, str) and isinstance(_end, str):
             if start != "" and end != "":
                 start = cal.string2date(_start)
@@ -299,7 +317,10 @@ class StockCore(object):
             start = _start
             end = _end
         df = self.bar.load(start, end, _freq)
-        return StockBar.create(self.symbol, _freq, df)
+        if df is not None and df.empty == False:
+            return StockBar.create(self.symbol, _freq, df)
+        else:
+            return None
 
 
 @singleton
@@ -357,9 +378,6 @@ class Stock(object):
         self.core = StockCore(symbol)
         self.bars = {}
 
-    def __del__(self):
-        del self.core
-
     def release(self):
         self.core.release()
         StockFactory().recover(self)
@@ -375,11 +393,10 @@ class Stock(object):
         pass
 
     def isnew(self):
-        return (cal.date2int(cal.now())) - self.core.get_info()['list_date'] < 30
+        timedelta = cal.now() -  cal.create(self.core.get_info()['list_date'].astype('int64'))
+        return timedelta.days < 30
 
     def __contain(self, b, start, end):
-        sync_start = cal.date2int(start)
-        sync_end = cal.date2int(end)
         store_start, store_end = b.duration()
         if store_start is None or store_end is None:
             return False
@@ -388,7 +405,9 @@ class Stock(object):
 
     def bar(self, start, end, freq=FREQ_DAY):
         b = self.bars.get(freq)
-        if b is None or not self.__contain(b, start, end):
+        _start = cal.create(start)
+        _end = cal.create(end)
+        if b is None or not self.__contain(b, _start, _end):
             b = self.core.loadbar(_start=start, _end=end,
                                   _freq=freq)
             self.bars[freq] = b
@@ -396,5 +415,6 @@ class Stock(object):
 
 
 if __name__ == "__main__":
-    s = Stock('000001.SZ')
-    print(s.isnew())
+    pass
+    #s = Stock('000001.SZ')
+    #print(s.isnew())
