@@ -3,6 +3,7 @@
 
 from carp import context
 from carp import util
+from carp import render
 
 
 
@@ -21,5 +22,8 @@ print(context.get_date_bars('000002', '2015-11-11', '2018-05-11', freq = util.FR
 print(context.get_count_bars('000002', None, limit = 20, freq = util.FREQ_DAY))
 
 
+r = render.StockBarRender.create('000002', '2017-10-10', '2018-03-20', util.FREQ_DAY)
 
-
+page = render.WebPage('test')
+page.add(r)
+page.show()

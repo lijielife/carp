@@ -17,11 +17,6 @@ class StockBarRender(object):
         df = context.get_date_bars(symbol, start, end, freq, True)
         return StockBarRender(symbol, df, freq)
 
-    @staticmethod
-    def create(symbol, last, freq, count = 300):
-        df = context.get_count_bars(symbol, last, count, freq, True)
-        return StockBarRender(symbol, df, freq)
-
     def __init__(self, symbol, df, freq):
         self.success = False
         self.__symbol = symbol

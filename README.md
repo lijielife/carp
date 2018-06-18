@@ -4,7 +4,9 @@
 # Usage
 
 ## 启动mongodb server
+create cache directory
 ```sh
+cd carp ; mkdir cache
 mongodb -f mongodb.conf
 ```
 
@@ -130,6 +132,21 @@ context.get_count_bars('000002', None, limit = 5, freq = util.FREQ_DAY)
 4   1.437706e+09  27.31 2018-06-11  27.73  26.68  26.74  0.54000  526436.00
 ...
 ```
+
+
+* sample render
+
+
+```python
+r = render.StockBarRender.create('000002', '2017-10-10', '2018-03-20', util.FREQ_DAY)
+
+page = render.WebPage('test')
+page.add(r)
+page.show()
+```
+
+![image](https://github.com/lynink/carp/blob/master/test/render.png)
+
 
 
 # TODO
